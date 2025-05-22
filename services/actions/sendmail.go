@@ -3,8 +3,10 @@ package actions
 import (
 	"context"
 	"fmt"
-	"net/smtp"
+	"strings"
 
+	"github.com/emersion/go-sasl"
+	smtp "github.com/emersion/go-smtp"
 	"github.com/mudler/LocalAGI/core/types"
 	"github.com/mudler/LocalAGI/pkg/config"
 	"github.com/sashabaranov/go-openai/jsonschema"
@@ -41,18 +43,40 @@ func (a *SendMailAction) Run(ctx context.Context, sharedState *types.AgentShared
 		return types.ActionResult{}, err
 	}
 
-	// Authentication.
-	auth := smtp.PlainAuth("", a.email, a.password, a.smtpHost)
+	auth := sasl.NewPlainClient("", a.email, a.password)
 
-	// Sending email.
-	err = smtp.SendMail(
-		fmt.Sprintf("%s:%s", a.smtpHost, a.smtpPort),
-		auth, a.email, []string{
-			result.To,
-		}, []byte(result.Message))
-	if err != nil {
-		return types.ActionResult{}, err
+	serverAddr := fmt.Sprintf("%s:%s", a.smtpHost, a.smtpPort)
+	toEmails := []string{ result.To }
+
+	if false {
+		err = smtp.SendMail(serverAddr, auth, a.email, toEmails, strings.NewReader(result.Message))
+		if err != nil {
+			return types.ActionResult{}, err
+		}
+	} else {
+
+		c, err := smtp.Dial(serverAddr)
+		if err != nil {
+			return types.ActionResult{}, err
+		}
+		defer c.Close()
+
+		err = c.Hello("client")
+		if err != nil {
+			return types.ActionResult{}, err
+		}
+
+		err = c.Auth(auth)
+		if err != nil {
+			return types.ActionResult{}, err
+		}
+
+		err = c.SendMail(a.email, toEmails, strings.NewReader(result.Message))
+		if err != nil {
+			return types.ActionResult{}, err
+		}
 	}
+	
 	return types.ActionResult{Result: fmt.Sprintf("Email sent to %s", result.To)}, nil
 }
 
